@@ -38,19 +38,28 @@ def hdlc_crc(data):
 
 def read_frame():
     frame = b''  # Фрейм, состоящий из байтов.
-    is_frame = False
     is_escape_char = False
 
     while True:
         current_byte = ser.read(1)
 
-        print(current_byte.hex(), end=' ')
+        #print(current_byte.hex(), end=' ')
+
+        # Проверка для предотвращения зацикленности.
+        if len(frame) > 32:
+            raise FrameLengthError('Frame length error.')
+
+        # Если пришло начало фрейма '~', то пробуем считать фрейм дальше.
+        if current_byte == b'~' and len(frame) == 0:
+            frame += current_byte
+            continue
+
         # Если попался символ экранирования , то запоминаем.
-        if current_byte == b'\x7D':
+        if current_byte == b'\x7D' and len(frame) > 0:
             is_escape_char = True
             continue
 
-        if is_frame:
+        if len(frame) > 0:
 
             # Если предыдущий символ был символом экранизации, то надо преобразовать текущий.
             # Приводим текущий байт к int, делаем xor 0x20 и приводим обратно к bytes.
@@ -61,8 +70,8 @@ def read_frame():
                 frame += current_byte
                 continue
 
-            #if (current_byte == b'~' and len(frame) < 4):
-            #    continue
+            if current_byte == b'~' and len(frame) == 1:
+                continue
 
             frame += current_byte
 
@@ -73,21 +82,14 @@ def read_frame():
                 check_crc = hdlc_crc(data).lower()  # Пересчитанная CRC16.
 
                 #print(frame, time.time())
-                print("---", time.time(), end="")
-                print()
+                #print("---", time.time(), end="")
+                #print()
+                print(data[:len(data)-1].decode())
                 # Если CRC не совпадают, то значит пришел ошибочный фрейм.
                 if frame_crc != check_crc:
                     raise CRCError('CRC error. Frame CRC: {0}. Check CRC: {1}. Full Frame {2}'.format(str(frame_crc), check_crc, str(frame)))
                 return data[:len(data)-1].decode()
 
-        # Если пришло начало фрейма '~', то пробуем считать фрейм дальше.
-        if current_byte == b'~' and not is_frame:
-            frame += current_byte
-            is_frame = True
-
-        # Проверка для предотвращения зацикленности.
-        if len(frame) > 32:
-            raise FrameLengthError('Frame length error.')
 
 # ---- Backend (Flask) Part ----
 
