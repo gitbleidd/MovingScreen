@@ -11,6 +11,7 @@ position_lock = Lock()
 
 ser = None  # Переменная для взамодействия с COM портом.
 position = 0  # Позиция экрана от 0 до n.
+f = open("hdlc_output.txt", "a")
 
 # ---- HDLC Part ----
 
@@ -43,6 +44,7 @@ def read_frame():
     while True:
         current_byte = ser.read(1)
 
+        # Debug:
         #print(current_byte.hex(), end=' ')
 
         # Проверка для предотвращения зацикленности.
@@ -81,13 +83,22 @@ def read_frame():
                 frame_crc = (frame[-2:-4:-1]).hex().lower()  # CRC16 из фрейма.
                 check_crc = hdlc_crc(data).lower()  # Пересчитанная CRC16.
 
+                # Debug part:
+
                 #print(frame, time.time())
                 #print("---", time.time(), end="")
                 #print()
-                print(data[:len(data)-1].decode())
+
+                #print(data[:len(data)-1].decode())
+
+                # --- --- ---
+
                 # Если CRC не совпадают, то значит пришел ошибочный фрейм.
                 if frame_crc != check_crc:
                     raise CRCError('CRC error. Frame CRC: {0}. Check CRC: {1}. Full Frame {2}'.format(str(frame_crc), check_crc, str(frame)))
+
+                f.write(str(data[:len(data) - 1].decode()))
+                f.write("\n")
                 return data[:len(data)-1].decode()
 
 
@@ -144,7 +155,7 @@ def position_updater():
         position_lock.acquire()
         position = local_position
         position_lock.release()
-        time.sleep(0.001)
+        #time.sleep(0.001)
 
 
 if __name__ == "__main__":
