@@ -1,22 +1,22 @@
 from flask import Flask
 from flask import jsonify
-from datetime import datetime
 from threading import Thread
 from threading import Lock
 import time
-
-position_lock = Lock()
+import os.path
+import json
+import serial
+import crcmod
 
 # ---- Global vars ----
 
 ser = None  # Переменная для взамодействия с COM портом.
-position = 0  # Позиция экрана от 0 до n.
-f = open("hdlc_output.txt", "a")
+port = 'COM10'  # Порт для связи с Arduino.
+position = 0.0  # Позиция экрана от 0 до 100.
+position_lock = Lock()  # Мьютекс для переменной position.
+MAX_POSITION = 2680  # Максимальное значение позиции экрана, приходящее с Arduino.
 
 # ---- HDLC Part ----
-
-import serial
-import crcmod
 
 
 class CRCError(Exception):
@@ -43,9 +43,6 @@ def read_frame():
 
     while True:
         current_byte = ser.read(1)
-
-        # Debug:
-        #print(current_byte.hex(), end=' ')
 
         # Проверка для предотвращения зацикленности.
         if len(frame) > 32:
@@ -83,23 +80,14 @@ def read_frame():
                 frame_crc = (frame[-2:-4:-1]).hex().lower()  # CRC16 из фрейма.
                 check_crc = hdlc_crc(data).lower()  # Пересчитанная CRC16.
 
-                # Debug part:
-
-                #print(frame, time.time())
-                #print("---", time.time(), end="")
-                #print()
-
-                #print(data[:len(data)-1].decode())
-
-                # --- --- ---
-
                 # Если CRC не совпадают, то значит пришел ошибочный фрейм.
                 if frame_crc != check_crc:
                     raise CRCError('CRC error. Frame CRC: {0}. Check CRC: {1}. Full Frame {2}'.format(str(frame_crc), check_crc, str(frame)))
 
-                f.write(str(data[:len(data) - 1].decode()))
-                f.write("\n")
-                return data[:len(data)-1].decode()
+                # Отдаем значение приведенное к процентам, с двумя знаками после запятой.
+                num = int(data[:len(data)-1])
+                res = round((num * 100 / MAX_POSITION), 2)
+                return res
 
 
 # ---- Backend (Flask) Part ----
@@ -109,38 +97,41 @@ app = Flask(__name__)
 app.debug = True
 
 
-@app.route('/')
-def index():
-    return 'Index Page'
-
-
-@app.route("/main")
-def test():
+@app.route("/", methods=["GET"])
+def route():
     position_lock.acquire()
-    global position
     data = {'name': 'Display position', 'position': position}
     position_lock.release()
-    return jsonify(data)
+    response = jsonify(data)
+
+    # Включить Access-Control-Allow-Origin
+    response.headers.add("Access-Control-Allow-Origin", "*")
+    return response
 
 
 def position_updater():
     global ser
     global position
-
-    local_position = 0
     while True:
         try:
             if ser is None:
                 raise serial.SerialException
-            local_position = int(read_frame())
+
+            local_position = read_frame()  # Считываем значение кадра
+
+            # Критическая секция
+            position_lock.acquire()
+            position = local_position
+            position_lock.release()
+
         except serial.SerialException:
             try:
                 if ser is None:
-                    ser = serial.Serial('COM10', 9600, timeout=0)
+                    ser = serial.Serial(port, 9600, timeout=0)
                     ser.flush()
                     continue
                 ser.close()
-                ser = serial.Serial('COM10', 9600, timeout=0)
+                ser = serial.Serial(port, 9600, timeout=0)
                 ser.flush()
             except Exception as e:
                 print(e)
@@ -151,16 +142,36 @@ def position_updater():
             print(e)
         except Exception as e:
             print(e)
-
-        position_lock.acquire()
-        position = local_position
-        position_lock.release()
         #time.sleep(0.001)
 
 
+def read_config():
+    global port
+
+    file = None
+    file_name = 'config.json'
+    file_exists = os.path.isfile(file_name)
+    if file_exists:
+        file = open(file_name, 'r')
+        data = file.read()
+        port = json.loads(data)['port']
+
+    else:
+        file = open(file_name, 'w+')
+        data = json.dumps({'port': port})
+        file.write(data)
+    file.close()
+
+
 if __name__ == "__main__":
-    # Поток, который обновляет глобаль
+    try:
+        read_config()
+    except Exception as e:
+        print(e)
+
+    # Поток, который обновляет позицию экрана
     positionThread = Thread(target=position_updater, args=[])
     positionThread.start()
 
+    # Flask
     app.run(host='0.0.0.0', debug=False, threaded=True)

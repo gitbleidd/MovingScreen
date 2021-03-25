@@ -3,3 +3,7 @@
 
 #Virtual environment
 venv/
+
+#Others
+__pycache__/
+*.json
