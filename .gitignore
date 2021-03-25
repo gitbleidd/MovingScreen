@@ -7,3 +7,8 @@ venv/
 #Others
 __pycache__/
 *.json
+
+#Pyinstaller
+build/
+dist/
+main.spec

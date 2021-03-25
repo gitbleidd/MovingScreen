@@ -97,15 +97,15 @@ app = Flask(__name__)
 app.debug = True
 
 
-@app.route("/", methods=["GET"])
-def route():
+@app.route('/screen', methods=["GET"])
+def screen():
     position_lock.acquire()
     data = {'name': 'Display position', 'position': position}
     position_lock.release()
     response = jsonify(data)
 
     # Включить Access-Control-Allow-Origin
-    response.headers.add("Access-Control-Allow-Origin", "*")
+    response.headers.add('Access-Control-Allow-Origin', '*')
     return response
 
 
@@ -134,6 +134,7 @@ def position_updater():
                 ser = serial.Serial(port, 9600, timeout=0)
                 ser.flush()
             except Exception as e:
+                time.sleep(3)
                 print(e)
                 continue
         except CRCError as e:
@@ -173,5 +174,8 @@ if __name__ == "__main__":
     positionThread = Thread(target=position_updater, args=[])
     positionThread.start()
 
+    print('Arduino reader thread started.')
+    print('Screen position:', 'http://127.0.0.1:5000/screen')
+
     # Flask
-    app.run(host='0.0.0.0', debug=False, threaded=True)
+    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
