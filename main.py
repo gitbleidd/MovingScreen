@@ -15,6 +15,8 @@ port = 'COM10'  # Порт для связи с Arduino.
 position = 0.0  # Позиция экрана от 0 до 100.
 position_lock = Lock()  # Мьютекс для переменной position.
 MAX_POSITION = 2680  # Максимальное значение позиции экрана, приходящее с Arduino.
+bytes_buff = b''
+bytes_buff_index = 0
 
 # ---- HDLC Part ----
 
@@ -38,11 +40,17 @@ def hdlc_crc(data):
 
 
 def read_frame():
+    global bytes_buff_index
+
     frame = b''  # Фрейм, состоящий из байтов.
     is_escape_char = False
 
     while True:
-        current_byte = ser.read(1)
+        if bytes_buff_index + 1 >= len(bytes_buff):
+            return 'not_finished', 0
+
+        current_byte = bytes_buff[bytes_buff_index:bytes_buff_index + 1]
+        bytes_buff_index += 1
 
         # Проверка для предотвращения зацикленности.
         if len(frame) > 32:
@@ -114,19 +122,49 @@ def screen():
 def position_updater():
     global ser
     global position
+    global bytes_buff
+    global bytes_buff_index
+
+    prev_frame_part = b''
     while True:
         try:
             if ser is None:
                 raise serial.SerialException
+            bytes_buff = ser.read(1)
+            bytes_buff += ser.read(ser.in_waiting)
 
-            status, local_position = read_frame()  # Считываем значение кадра
+            # i = max(1, min(2048, ser.in_waiting))
+            # bytes_buff = ser.read(i)
 
-            if status == 'ok':
-                # Критическая секция
-                position_lock.acquire()
-                position = local_position
-                position_lock.release()
-                print(position)
+            print(bytes_buff)
+            if len(bytes_buff) == 0:
+                time.sleep(0.0001)
+                continue
+
+            bytes_buff = prev_frame_part + bytes_buff
+            bytes_buff_index = 0
+            prev_frame_part = b''
+
+            while bytes_buff_index < len(bytes_buff):
+                try:
+                    current_frame_index = bytes_buff_index
+
+                    status, local_position = read_frame()  # Считываем значение кадра
+                    if status == 'ok':
+                        # Критическая секция
+                        position_lock.acquire()
+                        position = local_position
+                        position_lock.release()
+                        print(position)
+                    elif status == 'not_finished':
+                        #print('Not finished')
+                        prev_frame_part = bytes_buff[bytes_buff_index:len(bytes_buff)]
+                        break
+
+                except Exception as e:
+                    print(e)
+
+
 
         except serial.SerialException:
             try:
