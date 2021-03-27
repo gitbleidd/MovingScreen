@@ -46,7 +46,8 @@ def read_frame():
 
         # Проверка для предотвращения зацикленности.
         if len(frame) > 32:
-            raise FrameLengthError('Frame length error.')
+            print('Frame length error.')
+            return 'bad_frame', 0
 
         # Если пришло начало фрейма '~', то пробуем считать фрейм дальше.
         if current_byte == b'~' and len(frame) == 0:
@@ -82,12 +83,13 @@ def read_frame():
 
                 # Если CRC не совпадают, то значит пришел ошибочный фрейм.
                 if frame_crc != check_crc:
-                    raise CRCError('CRC error. Frame CRC: {0}. Check CRC: {1}. Full Frame {2}'.format(str(frame_crc), check_crc, str(frame)))
+                    print('CRC error. Frame CRC: {0}. Check CRC: {1}. Full Frame {2}'.format(str(frame_crc), check_crc, str(frame)))
+                    return 'bad_frame', 0
 
                 # Отдаем значение приведенное к процентам, с двумя знаками после запятой.
                 num = int(data[:len(data)-1])
                 res = round((num * 100 / MAX_POSITION), 2)
-                return res
+                return 'ok', res
 
 
 # ---- Backend (Flask) Part ----
@@ -117,12 +119,14 @@ def position_updater():
             if ser is None:
                 raise serial.SerialException
 
-            local_position = read_frame()  # Считываем значение кадра
+            status, local_position = read_frame()  # Считываем значение кадра
 
-            # Критическая секция
-            position_lock.acquire()
-            position = local_position
-            position_lock.release()
+            if status == 'ok':
+                # Критическая секция
+                position_lock.acquire()
+                position = local_position
+                position_lock.release()
+                print(position)
 
         except serial.SerialException:
             try:
