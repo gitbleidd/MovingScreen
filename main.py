@@ -7,6 +7,7 @@ import os.path
 import json
 import serial
 import crcmod
+import serial.tools.list_ports
 
 # ---- Global vars ----
 
@@ -152,20 +153,47 @@ def position_updater():
 
 def read_config():
     global port
+    global MAX_POSITION
 
     file = None
     file_name = 'config.json'
     file_exists = os.path.isfile(file_name)
+
     if file_exists:
         file = open(file_name, 'r')
         data = file.read()
-        port = json.loads(data)['port']
+        file_port = json.loads(data)['port']
+
+        # Если пустая строка в поле "port", то ищем порт.
+        if not file_port:
+            searched_port = search_port()
+            if searched_port is not None:
+                port = searched_port
+        else:
+            port = file_port
+
+        # Чтение максимальной позиции экрана.
+        searched_maxpos = json.loads(data)['maxPosition']
+        if searched_maxpos:
+            MAX_POSITION = int(searched_maxpos)
 
     else:
+        searched_port = search_port()
+        if searched_port is not None:
+            port = searched_port
+
         file = open(file_name, 'w+')
-        data = json.dumps({'port': port})
+        data = json.dumps({'port': port, 'maxPosition': MAX_POSITION})
         file.write(data)
     file.close()
+
+
+def search_port():
+    ports = list(serial.tools.list_ports.comports())
+    for p in ports:
+        if "Arduino" in p.description:
+            return p.device
+    return None
 
 
 if __name__ == "__main__":
