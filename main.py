@@ -33,7 +33,7 @@ def hdlc_crc(data):
     return crc
 
 
-def read_frame():
+def read_frame(delta: int):
     frame = b''  # Фрейм, состоящий из байтов.
     is_escape_char = False
 
@@ -84,9 +84,8 @@ def read_frame():
 
                 # Отдаем значение приведенное к процентам, с двумя знаками после запятой.
                 min_pos = config['minPosition']
-                max_pos = config['maxPosition']
-                num = int(data[:len(data)-1])
-                res = round((num * 100 / max_pos), 2)
+                num = int(data[:len(data)-1]) - min_pos
+                res = round((num * 100 / delta), 2)
                 return 'ok', res
 
 
@@ -109,18 +108,51 @@ def screen():
     return response
 
 
-def position_updater():
+def connect_to_serial():
+    """
+    Инициализирует соединение с Serial портом,
+    либо совершает переподключение в случае разрыва соединения.
+    """
     global ser
-    global position
+    port = 'COM1234'  # Значение порта по умолчанию.
 
-    port = 'COM11'  # Значение порта по умолчанию.
     while True:
         try:
+            new_port = search_port(config['portSearchAttribute'])
+            port = new_port if new_port is not None else port
+
+            # Если порт сброшен.
             if ser is None:
-                raise serial.SerialException
+                ser = serial.Serial(port, 9600, timeout=0)
+                time.sleep(0.001)  # Ждем, для того, чтобы буффер корректно очистился.
+                ser.flush()
+                return
+            # Проверка на то, не отвалились ли мы от Arduino.
+            else:
+                ser_bytes = ser.in_waiting
+                return
+        except serial.SerialException as e:
+            print(e)
+            if ser is not None:
+                ser.close()
+                ser = None
+            time.sleep(3)  # 3 Секунды на ожидания подключения Arduino.
+            continue
+        except Exception as e:
+            print(e)
 
-            status, local_position = read_frame()  # Считываем значение кадра
 
+def position_updater():
+    """
+    Считывает HDLC фреймы из Serial порта
+    и обновляет глобальную переменную позиции экрана.
+    """
+    global position
+    delta = config['maxPosition'] - config['minPosition']  # Дельта для перевода в проценты.
+    connect_to_serial()
+    while True:
+        try:
+            status, local_position = read_frame(delta)  # Считываем значение кадра.
             if status == 'ok':
                 # Критическая секция
                 position_lock.acquire()
@@ -128,21 +160,11 @@ def position_updater():
                 position_lock.release()
                 print(position)
 
-        except serial.SerialException:
-            try:
-                new_port = search_port(config['portSearchAttribute'])
-                port = new_port if new_port is not None else port
-                if ser is None:
-                    ser = serial.Serial(port, 9600, timeout=0)
-                    ser.flush()
-                    continue
-                ser.close()
-                ser = serial.Serial(port, 9600, timeout=0)
-                ser.flush()
-            except Exception as e:
-                time.sleep(3)
-                print(e)
-                continue
+        # Если возникли проблемы с Serial портом, то
+        # пробуем переподключиться.
+        except serial.SerialException as e:
+            print(e)
+            connect_to_serial()
         except Exception as e:
             print(e)
 
@@ -197,13 +219,10 @@ def search_port(search_param='Arduino'):
 
 
 if __name__ == "__main__":
-    # TODO распознование порта для arudino mega -
-    #  просто вывести ключевые слова в конфиг и по ним ищем.
-
     # TODO добавить минимальное значение экрана с arduino;
     #  на основе дельты delta = (max-min) считатать все.
 
-    # TODO поробовать добавить сокеты.
+    # TODO сокеты.
 
     setup_config()
 
