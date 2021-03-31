@@ -10,12 +10,18 @@ import crcmod
 import serial.tools.list_ports
 
 # ---- Global vars ----
-
 ser = None  # Переменная для взамодействия с COM портом.
-port = 'COM10'  # Порт для связи с Arduino.
-position = 0.0  # Позиция экрана от 0 до 100.
 position_lock = Lock()  # Мьютекс для переменной position.
-MAX_POSITION = 2680  # Максимальное значение позиции экрана, приходящее с Arduino.
+position = 0.0  # Позиция экрана от 0 до 100.
+
+# Порт для связи с Arduino.
+# Атрибут по которому будет искаться порт.
+# Максимальное значение позиции экрана, приходящее с Arduino.
+# Минимальное значение позиции экрана, приходящее с Arduino.
+config = {'port': 'COM10',
+          'portSearchAttribute': 'Arduino',
+          'minPosition': 0,
+          'maxPosition': 2680}
 
 # ---- HDLC Part ----
 
@@ -88,8 +94,10 @@ def read_frame():
                     return 'bad_frame', 0
 
                 # Отдаем значение приведенное к процентам, с двумя знаками после запятой.
+                min_pos = config['minPosition']
+                max_pos = config['maxPosition']
                 num = int(data[:len(data)-1])
-                res = round((num * 100 / MAX_POSITION), 2)
+                res = round((num * 100 / max_pos), 2)
                 return 'ok', res
 
 
@@ -115,6 +123,7 @@ def screen():
 def position_updater():
     global ser
     global position
+    port = config['port']
     while True:
         try:
             if ser is None:
@@ -151,56 +160,79 @@ def position_updater():
         #time.sleep(0.001)
 
 
-def read_config():
-    global port
-    global MAX_POSITION
-
-    file = None
+def read_config() -> dict:
     file_name = 'config.json'
     file_exists = os.path.isfile(file_name)
 
     if file_exists:
-        file = open(file_name, 'r')
-        data = file.read()
-        file_port = json.loads(data)['port']
-
-        # Если пустая строка в поле "port", то ищем порт.
-        if not file_port:
-            searched_port = search_port()
-            if searched_port is not None:
-                port = searched_port
-        else:
-            port = file_port
-
-        # Чтение максимальной позиции экрана.
-        searched_maxpos = json.loads(data)['maxPosition']
-        if searched_maxpos:
-            MAX_POSITION = int(searched_maxpos)
-
+        with open(file_name, 'r') as f:
+            derived_config = json.load(f)
+        return derived_config
     else:
-        searched_port = search_port()
-        if searched_port is not None:
-            port = searched_port
-
-        file = open(file_name, 'w+')
-        data = json.dumps({'port': port, 'maxPosition': MAX_POSITION})
-        file.write(data)
-    file.close()
+        # Записываем стандартный конфиг
+        with open(file_name, 'w+') as f:
+            json.dump(config, f)
+        return config
 
 
-def search_port():
+def setup_config(derived_config: dict):
+    """
+    Копирует значения из полученного конфига.
+    Ищет порт, если установлен новый порт или указан порт по умолчанию.
+    """
+
+    global config
+    searched_port = search_port(config['portSearchAttribute'])
+
+    # Если в поле порта ничего нет,
+    # или там указан порт порт по умолчанию,
+    # то устанавливаем только что найденный порт.
+    if searched_port is not None and (derived_config['port'] == config['port'] or derived_config['port'] == ''):
+        config['port'] = searched_port
+    else:
+        config['port'] = derived_config['portSearchAttribute']
+
+    # Копируем оставшиеся значения.
+    config['portSearchAttribute'] = derived_config['portSearchAttribute']
+    config['minPosition'] = derived_config['minPosition']
+    config['maxPosition'] = derived_config['maxPosition']
+
+
+def search_port(search_param='Arduino'):
+    """
+    Возвращает порт на основе введенного параметра,
+    либо None в случае неудачи.
+    """
     ports = list(serial.tools.list_ports.comports())
     for p in ports:
-        if "Arduino" in p.description:
+        if search_param in p.description:
             return p.device
     return None
 
 
+
 if __name__ == "__main__":
+    # TODO распознование порта для arudino mega -
+    #  просто вывести ключевые слова в конфиг и по ним ищем.
+
+    # TODO добавить минимальное значение экрана с arduino;
+    #  на основе дельты delta = (max-min) считатать все.
+
+    # TODO поробовать добавить сокеты.
+
+    read_status, derived_config = False, config
     try:
-        read_config()
+        derived_config = read_config()
+        setup_config(derived_config)
+    except json.decoder.JSONDecodeError as e:
+        print(e)
     except Exception as e:
         print(e)
+        print('Config file corrupted or something went wrong. '
+              'Default settings will be loaded.')
+    finally:
+        print('Current config: ', config)
+
 
     # Поток, который обновляет позицию экрана
     positionThread = Thread(target=position_updater, args=[])
