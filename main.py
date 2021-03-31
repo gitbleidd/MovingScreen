@@ -18,22 +18,11 @@ position = 0.0  # Позиция экрана от 0 до 100.
 # Атрибут по которому будет искаться порт.
 # Максимальное значение позиции экрана, приходящее с Arduino.
 # Минимальное значение позиции экрана, приходящее с Arduino.
-config = {'port': 'COM10',
-          'portSearchAttribute': 'Arduino',
+config = {'portSearchAttribute': 'Arduino',
           'minPosition': 0,
           'maxPosition': 2680}
 
 # ---- HDLC Part ----
-
-
-class CRCError(Exception):
-    def __init__(self, text):
-        self.txt = text
-
-
-class FrameLengthError(Exception):
-    def __init__(self, text):
-        self.txt = text
 
 
 # Функция, принимающая байты и возращающая строку CRC суммы.
@@ -123,7 +112,8 @@ def screen():
 def position_updater():
     global ser
     global position
-    port = config['port']
+
+    port = 'COM11'  # Значение порта по умолчанию.
     while True:
         try:
             if ser is None:
@@ -140,6 +130,8 @@ def position_updater():
 
         except serial.SerialException:
             try:
+                new_port = search_port(config['portSearchAttribute'])
+                port = new_port if new_port is not None else port
                 if ser is None:
                     ser = serial.Serial(port, 9600, timeout=0)
                     ser.flush()
@@ -151,13 +143,8 @@ def position_updater():
                 time.sleep(3)
                 print(e)
                 continue
-        except CRCError as e:
-            print(e)
-        except FrameLengthError as e:
-            print(e)
         except Exception as e:
             print(e)
-        #time.sleep(0.001)
 
 
 def read_config() -> dict:
@@ -175,27 +162,25 @@ def read_config() -> dict:
         return config
 
 
-def setup_config(derived_config: dict):
+def setup_config():
+    """Читает конфиг и копирует из него значения.
     """
-    Копирует значения из полученного конфига.
-    Ищет порт, если установлен новый порт или указан порт по умолчанию.
-    """
-
     global config
-    searched_port = search_port(config['portSearchAttribute'])
 
-    # Если в поле порта ничего нет,
-    # или там указан порт порт по умолчанию,
-    # то устанавливаем только что найденный порт.
-    if searched_port is not None and (derived_config['port'] == config['port'] or derived_config['port'] == ''):
-        config['port'] = searched_port
-    else:
-        config['port'] = derived_config['portSearchAttribute']
+    try:
+        derived_config = read_config()
 
-    # Копируем оставшиеся значения.
-    config['portSearchAttribute'] = derived_config['portSearchAttribute']
-    config['minPosition'] = derived_config['minPosition']
-    config['maxPosition'] = derived_config['maxPosition']
+        config['portSearchAttribute'] = derived_config['portSearchAttribute']
+        config['minPosition'] = derived_config['minPosition']
+        config['maxPosition'] = derived_config['maxPosition']
+    except json.decoder.JSONDecodeError as e:
+        print(e)
+    except Exception as e:
+        print(e)
+        print('Config file corrupted or something went wrong. '
+              'Default settings will be loaded.')
+    finally:
+        print('Current config: ', config)
 
 
 def search_port(search_param='Arduino'):
@@ -220,19 +205,7 @@ if __name__ == "__main__":
 
     # TODO поробовать добавить сокеты.
 
-    read_status, derived_config = False, config
-    try:
-        derived_config = read_config()
-        setup_config(derived_config)
-    except json.decoder.JSONDecodeError as e:
-        print(e)
-    except Exception as e:
-        print(e)
-        print('Config file corrupted or something went wrong. '
-              'Default settings will be loaded.')
-    finally:
-        print('Current config: ', config)
-
+    setup_config()
 
     # Поток, который обновляет позицию экрана
     positionThread = Thread(target=position_updater, args=[])
