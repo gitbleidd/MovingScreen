@@ -9,6 +9,10 @@ import serial
 import crcmod
 import serial.tools.list_ports
 
+import logging
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+
 # ---- Global vars ----
 ser = None  # Переменная для взамодействия с COM портом.
 position_lock = Lock()  # Мьютекс для переменной position.
@@ -33,7 +37,7 @@ def hdlc_crc(data):
     return crc
 
 
-def read_frame(delta: int):
+def read_frame():
     frame = b''  # Фрейм, состоящий из байтов.
     is_escape_char = False
 
@@ -82,11 +86,9 @@ def read_frame(delta: int):
                     print('CRC error. Frame CRC: {0}. Check CRC: {1}. Full Frame {2}'.format(str(frame_crc), check_crc, str(frame)))
                     return 'bad_frame', 0
 
-                # Отдаем значение приведенное к процентам, с двумя знаками после запятой.
-                min_pos = config['minPosition']
-                num = int(data[:len(data)-1]) - min_pos
-                res = round((num * 100 / delta), 2)
-                return 'ok', res
+                # Отдаем значение полученное с Arduino.
+                num = float(data[:len(data)-1])
+                return 'ok', num
 
 
 # ---- Backend (Flask) Part ----
@@ -114,7 +116,7 @@ def connect_to_serial():
     либо совершает переподключение в случае разрыва соединения.
     """
     global ser
-    port = 'COM1234'  # Значение порта по умолчанию.
+    port = 'COM11'  # Значение порта по умолчанию.
 
     while True:
         try:
@@ -124,8 +126,7 @@ def connect_to_serial():
             # Если порт сброшен.
             if ser is None:
                 ser = serial.Serial(port, 9600, timeout=0)
-                time.sleep(0.001)  # Ждем, для того, чтобы буффер корректно очистился.
-                ser.flush()
+                time.sleep(1)  # Ждем, для того, чтобы Arduino запустилась.
                 return
             # Проверка на то, не отвалились ли мы от Arduino.
             else:
@@ -133,9 +134,12 @@ def connect_to_serial():
                 return
         except serial.SerialException as e:
             print(e)
-            if ser is not None:
-                ser.close()
-                ser = None
+            try:
+                if ser is not None:
+                    ser.close()
+            except Exception as e:
+                print(e)
+            ser = None
             time.sleep(3)  # 3 Секунды на ожидания подключения Arduino.
             continue
         except Exception as e:
@@ -152,7 +156,11 @@ def position_updater():
     connect_to_serial()
     while True:
         try:
-            status, local_position = read_frame(delta)  # Считываем значение кадра.
+            status, num = read_frame()  # Считываем значение с Arduino.
+
+            min_pos = config['minPosition']
+            local_position = round((num - min_pos) * 100 / delta, 2)  # Значение в процентах.
+
             if status == 'ok':
                 # Критическая секция
                 position_lock.acquire()
@@ -217,11 +225,7 @@ def search_port(search_param='Arduino'):
     return None
 
 
-
 if __name__ == "__main__":
-    # TODO добавить минимальное значение экрана с arduino;
-    #  на основе дельты delta = (max-min) считатать все.
-
     # TODO сокеты.
 
     setup_config()
